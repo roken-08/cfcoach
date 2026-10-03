@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cfcoach"
+version = "0.4.0"
+description = "Codeforces practice coach"
+requires-python = ">=3.9"
+
+[project.scripts]
+cfcoach = "cfcoach:main"
+
+[tool.setuptools]
+py-modules = ["cfcoach", "cfcoach_sheets"]
