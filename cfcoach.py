@@ -4,7 +4,8 @@ short, targeted practice plan.
 
 Standard library only. Uses the free public Codeforces API and LeetCode's public GraphQL.
     cfcoach [handle] [--lc USER] [--lc-sync] [--cf-only] [--tags "dp,greedy"] [--total 25]
-Plans, remembered accounts, synced LeetCode history and the cache live in ~/cfcoach.
+Plans are saved to the "plan" folder on the Desktop as a shuffled list of names and links. Remembered accounts, the synced LeetCode
+history and the cache live in ~/cfcoach.
 
 LeetCode only publishes per-topic solve counts, the contest rating and the last 20 accepted
 problems. --lc-sync downloads your whole submission history with your own login cookie
@@ -15,6 +16,7 @@ import argparse
 import getpass
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -43,7 +45,7 @@ LC_MEDIUM, LC_HARD = 1300, 1800  # LeetCode ratings from which Mediums / Hards a
 SHEET_MAX = 2000  # above this target the interview sheets are too easy to be worth a slot
 RECENT = 1600     # contest ids from about late 2021 on: problems in today's contest style
 SHRINK = 8        # a tag's failure rate counts in full only once it has about this many problems
-HOME = Path.home() / "cfcoach"  # plans, remembered accounts, cache
+HOME = Path.home() / "cfcoach"  # remembered accounts, synced LeetCode history, cache
 CACHE = HOME / ".cache"
 LC_NAMES = HOME / "leetcode.json"  # Codeforces handle -> LeetCode username
 DAY = 86400
@@ -53,11 +55,7 @@ SHORT = {"WRONG_ANSWER": "WA", "TIME_LIMIT_EXCEEDED": "TLE", "MEMORY_LIMIT_EXCEE
          "RUNTIME_ERROR": "RE", "IDLENESS_LIMIT_EXCEEDED": "ILE", "CHALLENGED": "HACKED",
          "PRESENTATION_ERROR": "PE", "PARTIAL": "PARTIAL", "OUTPUT_LIMIT_EXCEEDED": "OLE"}
 LC_VERDICT = {"Accepted": "OK", "Compile Error": "COMPILATION_ERROR"}  # others: upper snake case
-DIFF = {"Easy": "Easy", "Medium": "Med", "Hard": "Hard"}
-WHY = ("Why each problem is here: CP-31, NC, A2Z = on a curated sheet (TLE Eliminators CP-31, "
-       "NeetCode 150, Striver A2Z). LC 1450 = a LeetCode contest problem of that rating. "
-       "Upsolve = you tried it and never solved it. Unmarked = the most-solved recent problem "
-       "of that topic and rating.")
+DIFFICULTIES = ("Easy", "Medium", "Hard")
 # Codeforces tag -> LeetCode topics (tags without a good match get Codeforces problems only)
 LC_TAG = {
     "dp": {"dynamic-programming", "memoization"}, "greedy": {"greedy"}, "binary search": {"binary-search"},
@@ -361,7 +359,7 @@ def lc_user(username, catalog, ratings):
         stats = user["submitStatsGlobal"]
         ac = {d["difficulty"]: d for d in stats["acSubmissionNum"]}
         sent = sum(d["submissions"] for d in stats["totalSubmissionNum"] if d["difficulty"] == "All")
-        solved = {d: ac[d]["count"] for d in ("All", *DIFF)}
+        solved = {d: ac[d]["count"] for d in ("All", *DIFFICULTIES)}
         accepted = 100 * ac["All"]["submissions"] // sent if sent else None
         tags = {t["tagSlug"]: t["problemsSolved"]
                 for group in user["tagProblemCounts"].values() for t in group}
@@ -397,13 +395,8 @@ def lc_count(tag, lc):
     return max(lc["tags"].get(t, 0) for t in topics) if topics else None
 
 
-def lc_item(q, meta):
-    return (q["title"], LC_URL.format(q["titleSlug"]), meta)
-
-
-def lc_meta(q, ratings):
-    r = ratings.get(q["questionFrontendId"])
-    return f"LC {round(r)}" if r else f"LC {DIFF[q['difficulty']]}"
+def lc_item(q):
+    return (q["title"], LC_URL.format(q["titleSlug"]))
 
 
 def sheet_picks(tag, target, k, free, used):
@@ -423,11 +416,10 @@ def sheet_picks(tag, target, k, free, used):
         if tag in e["tags"] or (topical and (e["mixed"] or tag not in SHEET_TAGS)):
             # fitting difficulty first, then problems on both sheets, then sheet order
             key = (order.index(q["difficulty"]), -len(e["where"]), min(e["where"].values()))
-            cand.append((key, "+".join(e["where"]), q))
-    take = sorted(cand, key=lambda x: x[0])[:k]
-    used.update(q["titleSlug"] for _, _, q in take)
-    take.sort(key=lambda x: (list(DIFF).index(x[2]["difficulty"]), x[0][2]))
-    return [lc_item(q, f"{src} {DIFF[q['difficulty']]}") for _, src, q in take]
+            cand.append((key, q))
+    take = [q for _, q in sorted(cand, key=lambda x: x[0])[:k]]
+    used.update(q["titleSlug"] for q in take)
+    return [lc_item(q) for q in take]
 
 
 def contest_picks(target, k, pool, ratings, used):
@@ -440,9 +432,9 @@ def contest_picks(target, k, pool, ratings, used):
 
     recent = sorted(pool, key=num, reverse=True)[:LC_RECENT]
     rated = [q for q in recent if q["questionFrontendId"] in ratings and q["titleSlug"] not in used]
-    take = sorted(sorted(rated, key=lambda q: abs(rating(q) - target))[:max(0, k)], key=rating)
+    take = sorted(rated, key=lambda q: abs(rating(q) - target))[:max(0, k)]
     used.update(q["titleSlug"] for q in take)
-    return [lc_item(q, f"LC {round(rating(q))}") for q in take]
+    return [lc_item(q) for q in take]
 
 
 # ---------------------------------------------------------------- analysis
@@ -550,8 +542,8 @@ def tag_share(problems, base):
 
 
 def build_topic(tag, center, n, c):
-    """n problems for one topic: sheet classics, LeetCode contest problems, upsolves, then a
-    Codeforces rating ladder."""
+    """n problems for one topic, as (name, link) pairs: sheet classics, LeetCode contest
+    problems, upsolves, then Codeforces problems below, at and above the target rating."""
     def rank(p):
         """Best first: problems that are really about this topic (no other technique tagged
         on them), then problems on the CP-31 sheet, then the most widely solved."""
@@ -575,8 +567,7 @@ def build_topic(tag, center, n, c):
                 take.append(p)
         c.used.update(pid(p) for p in take)
         c.used.update(p["name"] for p in take)
-        return [(p["name"], url(p), f"{p['rating']} CP-31" if pid(p) in CP31 else str(p["rating"]))
-                for p in sorted(take, key=lambda p: p["rating"])]
+        return [(p["name"], url(p)) for p in take]
 
     free = [q for q in c.catalog if not q["isPaidOnly"]
             and q["titleSlug"] not in c.done and q["titleSlug"] not in c.used]
@@ -606,18 +597,10 @@ def build_topic(tag, center, n, c):
 
     rest = n - len(classics) - len(contest) - len(reach) - len(retry)
     side = rest // 4
-    sections = [
-        ("Foundations: classics from NeetCode 150 (NC) / Striver A2Z", classics),
-        ("LeetCode: recent contest problems at your level", contest),
-        ("Upsolve: you tried these and never got AC",
-         [(p["name"], url(p), str(p["rating"])) for p in sorted(reach, key=lambda p: p["rating"])]
-         + [lc_item(q, lc_meta(q, c.ratings)) for q in retry]),
-        ("Warm-up: aim for a clean first-try AC", pick(center - 200, center - 100, side)),
-        ("Core: your level, 30-45 min each", pick(center, center + 100, rest - 2 * side)),
-        ("Stretch: think 45 min, then read the editorial and reimplement",
-         pick(center + 200, center + 300, side)),
-    ]
-    return [(title, items) for title, items in sections if items]
+    return (classics + contest + [(p["name"], url(p)) for p in reach] + [lc_item(q) for q in retry]
+            + pick(center - 200, center - 100, side)       # warm-up
+            + pick(center, center + 100, rest - 2 * side)  # core
+            + pick(center + 200, center + 300, side))      # stretch
 
 
 # ---------------------------------------------------------------- output
@@ -733,38 +716,42 @@ def pick_tags(rows, all_tags, focus, preset, total):
             sys.exit(1)
 
 
-def render(handle, pr, plan):
-    """Print the plan and return it as markdown."""
-    md = [f"# Practice plan for {handle}", "",
-          f"Practice level {pr['base']}. Work top to bottom; tick as you go.", "", WHY, ""]
-    print(dim(WHY))
-    step = 0
-    for tag, center, sections in plan:
-        print("\n" + bold(cyan(f"== {tag}  (target ~{center}) ==")))
-        md += [f"## {tag} (target ~{center})", ""]
-        for title, items in sections:
-            print("  " + bold(title))
-            md += [f"**{title}**", ""]
-            for name, link, meta in items:
-                step += 1
-                print(f"  {step:>3}. {name:<44.44} {meta:<11} {dim(link)}")
-                md.append(f"- [ ] {step}. [{name}]({link}) `{meta}`")
-            md.append("")
-    tips = ["One topic at a time, in the order above. Do not jump ahead to Stretch.",
+def render(handle, pr, items):
+    """Print the plan and return it as markdown: names and links only, in random order, so
+    that nothing gives away a problem's topic or rating before it is solved."""
+    random.shuffle(items)
+    md = [f"# Practice plan for {handle}", ""]
+    print("\n" + bold(f"{len(items)} problems in random order; topics and ratings are hidden on purpose"))
+    for i, (name, link) in enumerate(items, 1):
+        print(f"  {i:>3}. {name:<44.44} {dim(link)}")
+        md.append(f"- [ ] {i}. [{name}]({link})")
+    tips = ["Give each problem up to 45 minutes. If you are stuck, read the editorial and write "
+            "the solution yourself.",
             "After every failed submission, write one line on why it failed before fixing it.",
+            "On Codeforces, untick Settings > General > \"Show tags for unsolved problems\", or "
+            "each problem page shows its topic and rating.",
             "Re-run this tool when you finish: solved problems drop out and levels update."]
     if pr["live_fail"] and pr["upsolved"] * 2 < pr["live_fail"]:
         tips.insert(0, "You upsolve under half of what you fail in contests. After each contest, "
                        "solve the first problem you could not.")
     print("\n" + bold("How to use this"))
-    md += ["## How to use this", ""]
     for t in tips:
         print("  - " + t)
-        md.append("- " + t)
     return "\n".join(md) + "\n"
 
 
 # ---------------------------------------------------------------- main
+
+def desktop():
+    """The user's Desktop folder. Windows can relocate it (into OneDrive, for example)."""
+    try:
+        import winreg
+        key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+            return Path(os.path.expandvars(winreg.QueryValueEx(k, "Desktop")[0]))
+    except (ImportError, OSError):
+        return Path.home() / "Desktop"
+
 
 def run():
     ap = argparse.ArgumentParser(description="Codeforces practice coach")
@@ -878,9 +865,11 @@ def run():
     plan = []
     for i, t in enumerate(sorted(chosen, key=lambda t: centers[t])):  # easiest target first
         share = total // len(chosen) + (i < total % len(chosen))
-        plan.append((t, centers[t], build_topic(t, centers[t], share, ctx)))
+        plan += build_topic(t, centers[t], share, ctx)
 
-    out = HOME / f"plan_{handle}.md"
+    folder = desktop() / "plan"
+    folder.mkdir(parents=True, exist_ok=True)
+    out = folder / f"plan_{handle}.md"
     out.write_text(render(handle, pr, plan), encoding="utf-8")
     print(f"\nSaved checklist to {bold(out)}")
 
