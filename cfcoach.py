@@ -4,7 +4,7 @@ short, targeted practice plan.
 
 Standard library only. Uses the free public Codeforces API and LeetCode's public GraphQL.
     cfcoach [handle] [--lc USER] [--lc-sync] [--cf-only] [--tags "dp,greedy"] [--total 25]
-Plans are saved to the "plan" folder on the Desktop as a shuffled list of names and links. Remembered accounts, the synced LeetCode
+Plans are saved to the "plan" folder on the Desktop as a shuffled list of bare links. Remembered accounts, the synced LeetCode
 history and the cache live in ~/cfcoach.
 
 LeetCode only publishes per-topic solve counts, the contest rating and the last 20 accepted
@@ -717,14 +717,13 @@ def pick_tags(rows, all_tags, focus, preset, total):
 
 
 def render(handle, pr, items):
-    """Print the plan and return it as markdown: names and links only, in random order, so
-    that nothing gives away a problem's topic or rating before it is solved."""
+    """Print the plan and return the file's text: bare links only, one per line, in random
+    order, so that nothing gives away a problem's topic or rating before it is solved."""
     random.shuffle(items)
-    md = [f"# Practice plan for {handle}", ""]
-    print("\n" + bold(f"{len(items)} problems in random order; topics and ratings are hidden on purpose"))
-    for i, (name, link) in enumerate(items, 1):
-        print(f"  {i:>3}. {name:<44.44} {dim(link)}")
-        md.append(f"- [ ] {i}. [{name}]({link})")
+    md = [link for _, link in items]
+    print("\n" + bold(f"{len(items)} problems in random order; names, topics and ratings are hidden on purpose"))
+    for link in md:
+        print("  " + link)
     tips = ["Give each problem up to 45 minutes. If you are stuck, read the editorial and write "
             "the solution yourself.",
             "After every failed submission, write one line on why it failed before fixing it.",
