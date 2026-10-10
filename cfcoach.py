@@ -736,7 +736,7 @@ def render(handle, pr, items):
     print("\n" + bold("How to use this"))
     for t in tips:
         print("  - " + t)
-    return "\n".join(md) + "\n"
+    return "\n\n\n".join(md) + "\n"  # two blank lines between problems
 
 
 # ---------------------------------------------------------------- main
